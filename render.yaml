@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: coderecall
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python server.py
+    healthCheckPath: /api/health
+    envVars:
+      # Render generates a strong random value; copy it from the dashboard to
+      # sign in to the Admin panel (use it as the "Admin token").
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: PYTHON_VERSION
+        value: "3.12.6"

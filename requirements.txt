@@ -1,0 +1,2 @@
+# No third-party dependencies: the server only uses the Python standard library.
+# This file exists so Render detects the project as a Python service.

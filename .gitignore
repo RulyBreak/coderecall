@@ -1,0 +1,22 @@
+# Local secrets and runtime data — never commit these.
+admin_token.txt
+invites.json
+public_url.txt
+tunnel.log
+
+# Local tunneling / tooling
+.ngrok/
+start_tunnel.py
+start_tunnel.sh
+.screenshots/
+.trae-html-share-packages/
+
+# IDE / unrelated assets
+.trae/
+lark_auth_qr.png
+lark_login_qr.png
+
+# OS noise
+.DS_Store
+__pycache__/
+*.pyc

@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#f5f5f7">
+  <meta name="description" content="A focused code dictation workspace for data structures and algorithms.">
+  <title>CodeRecall — Dictation Studio</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="snippets.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#practice">Skip to practice</a>
+
+  <!-- Invite gate -->
+  <div class="invite-gate" id="invite-gate" role="dialog" aria-modal="true" aria-labelledby="invite-title" hidden>
+    <div class="invite-card">
+      <div class="invite-brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none"><path d="m8 7-5 5 5 5M16 7l5 5-5 5M14 4l-4 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        <h1 id="invite-title">CodeRecall</h1>
+        <p class="invite-subtitle">Enter your invite code to start practicing.</p>
+      </div>
+      <form class="invite-form" id="invite-form" autocomplete="off">
+        <label class="sr-only" for="invite-input">Invite code</label>
+        <input id="invite-input" type="text" inputmode="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX" maxlength="9">
+        <button type="submit" class="button button-primary invite-submit">
+          <span>Unlock</span>
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <p class="invite-error" id="invite-error" role="alert" hidden></p>
+      </form>
+      <button type="button" class="invite-admin-link" id="invite-admin-link">Admin</button>
+    </div>
+  </div>
+
+  <!-- Admin panel -->
+  <div class="admin-modal" id="admin-modal" role="dialog" aria-modal="true" aria-labelledby="admin-title" hidden>
+    <div class="admin-card">
+      <div class="admin-header">
+        <h2 id="admin-title">Invite codes</h2>
+        <button type="button" class="admin-close" id="admin-close" aria-label="Close">×</button>
+      </div>
+
+      <!-- Admin auth -->
+      <div class="admin-auth" id="admin-auth">
+        <label for="admin-token-input">Admin token</label>
+        <input id="admin-token-input" type="password" autocomplete="off" placeholder="Paste your admin token">
+        <button type="button" class="button button-primary" id="admin-login">Sign in</button>
+        <p class="admin-error" id="admin-error" role="alert" hidden></p>
+      </div>
+
+      <!-- Admin content (shown after auth) -->
+      <div class="admin-body" id="admin-body" hidden>
+        <div class="admin-generate">
+          <h3>Generate new code</h3>
+          <div class="admin-form-row">
+            <div class="admin-field">
+              <label for="gen-expiry">Expiry (days, 0 = never)</label>
+              <input id="gen-expiry" type="number" min="0" value="30">
+            </div>
+            <div class="admin-field">
+              <label for="gen-maxuses">Max uses</label>
+              <input id="gen-maxuses" type="number" min="1" value="1">
+            </div>
+            <div class="admin-field admin-field-note">
+              <label for="gen-note">Note (optional)</label>
+              <input id="gen-note" type="text" placeholder="e.g. For team member">
+            </div>
+          </div>
+          <button type="button" class="button button-primary" id="gen-button">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            <span>Generate code</span>
+          </button>
+        </div>
+
+        <div class="admin-list">
+          <h3>All codes</h3>
+          <div class="admin-table" id="admin-table" role="table"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="./" aria-label="CodeRecall home">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none"><path d="m8 7-5 5 5 5M16 7l5 5-5 5M14 4l-4 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        <span class="brand-copy"><strong>CodeRecall</strong><span>DICTATION STUDIO</span></span>
+      </a>
+
+      <div class="header-actions">
+        <div class="overall-progress" aria-label="Overall completion">
+          <span class="progress-ring" id="progress-ring" aria-hidden="true"><span id="progress-percent">0</span></span>
+          <span><strong id="progress-count">0 of 87</strong><small>Completed</small></span>
+        </div>
+        <div class="mode-control" role="group" aria-label="Practice mode">
+          <button class="mode-button is-active" type="button" data-mode="cloze" aria-pressed="true">Fill blanks</button>
+          <button class="mode-button" type="button" data-mode="friendly" aria-pressed="false">Friendly</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="app-shell">
+    <aside class="library-panel" aria-labelledby="library-title">
+      <div class="library-heading">
+        <div>
+          <p class="eyebrow">YOUR COLLECTION</p>
+          <h1 id="library-title">Exercise library</h1>
+        </div>
+        <span class="count-badge" id="library-count">87</span>
+      </div>
+
+      <div class="search-field">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.8"/><path d="m16 16 4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <label class="sr-only" for="search-input">Search exercises</label>
+        <input id="search-input" type="search" placeholder="Search exercises" autocomplete="off">
+        <kbd>/</kbd>
+      </div>
+
+      <div class="filter-row">
+        <label class="sr-only" for="chapter-select">Filter by chapter</label>
+        <select id="chapter-select">
+          <option value="all">All chapters</option>
+        </select>
+      </div>
+
+      <div class="status-filter" role="group" aria-label="Filter by completion">
+        <button type="button" class="status-button is-active" data-status="all" aria-pressed="true">All</button>
+        <button type="button" class="status-button" data-status="todo" aria-pressed="false">To do</button>
+        <button type="button" class="status-button" data-status="completed" aria-pressed="false">Completed</button>
+      </div>
+
+      <nav class="exercise-list" id="exercise-list" aria-label="Code exercises"></nav>
+      <div class="empty-library" id="empty-library" hidden>
+        <span aria-hidden="true">⌁</span>
+        <strong>No exercises found</strong>
+        <p>Try another search or filter.</p>
+        <button type="button" class="text-button" id="clear-filters">Clear filters</button>
+      </div>
+
+      <p class="storage-note">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7 10V8a5 5 0 0 1 10 0v2M6 10h12v10H6V10Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+        Progress stays on this device.
+      </p>
+      <button type="button" class="admin-entry" id="admin-entry">Admin</button>
+    </aside>
+
+    <section class="practice-panel" id="practice" aria-labelledby="exercise-title">
+      <div class="practice-heading">
+        <div class="practice-heading-main">
+          <div class="exercise-meta-top">
+            <span id="exercise-chapter">Linear Lists</span>
+            <span class="meta-dot" aria-hidden="true">·</span>
+            <span id="exercise-number">Exercise 1 of 87</span>
+          </div>
+          <h2 id="exercise-title">Sequential List Structure</h2>
+          <p id="exercise-description">Reproduce the sequential list structure implementation from memory.</p>
+        </div>
+        <div class="exercise-tags" aria-label="Exercise details">
+          <span class="tag" id="language-tag">C</span>
+          <span class="tag" id="lines-tag">8 lines</span>
+          <span class="tag best-tag" id="best-tag" hidden>Best 100%</span>
+        </div>
+      </div>
+
+      <section class="editor-card" aria-labelledby="editor-title">
+        <div class="card-header">
+          <div>
+            <h3 id="editor-title">Fill in the blanks</h3>
+            <p id="mode-description">Fill in the removed key terms. Comments are not checked.</p>
+          </div>
+          <span class="keyboard-hint"><kbd>⌘</kbd><span>+</span><kbd>↵</kbd><span>to check</span></span>
+        </div>
+
+        <div class="checkpoints-bar" role="group" aria-label="Checkpoint options">
+          <span class="checkpoints-label">Checkpoints</span>
+          <button type="button" class="checkpoint-toggle is-on" data-checkpoint="case" aria-pressed="true">Case</button>
+          <button type="button" class="checkpoint-toggle" data-checkpoint="spaces" aria-pressed="false">Spaces</button>
+          <button type="button" class="checkpoint-toggle" data-checkpoint="newlines" aria-pressed="false">Newlines</button>
+          <button type="button" class="checkpoint-toggle" data-checkpoint="punctuation" aria-pressed="false">Punctuation</button>
+        </div>
+
+        <div class="code-editor is-cloze" id="code-editor">
+          <pre class="line-numbers" id="line-numbers" aria-hidden="true">1</pre>
+          <label class="sr-only" for="code-input">Type the code from memory</label>
+          <textarea id="code-input" wrap="off" spellcheck="false" autocorrect="off" autocapitalize="off" autocomplete="off" placeholder="Type the code from memory…" aria-describedby="editor-help"></textarea>
+          <div class="cloze-code" id="cloze-code" role="group" aria-label="Fill in the missing code"></div>
+        </div>
+        <div class="editor-footer" id="editor-help">
+          <span id="editor-stats">0 of 0 blanks filled</span>
+          <span id="editor-hint">Comments are ignored during checking.</span>
+        </div>
+
+        <div class="practice-actions">
+          <button class="button button-primary" id="check-button" type="button">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m5 12 4.5 4.5L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span id="check-label">Check answers</span>
+          </button>
+          <button class="button button-secondary" id="reveal-button" type="button">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="2.7" stroke="currentColor" stroke-width="1.7"/></svg>
+            <span>Reveal answer</span>
+          </button>
+          <button class="button button-quiet" id="reset-button" type="button">Reset</button>
+          <button class="button button-next" id="next-button" type="button">
+            Next
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m9 5 7 7-7 7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+      </section>
+
+      <section class="result-card" id="result-card" aria-labelledby="result-title" aria-live="polite" hidden>
+        <div class="result-summary">
+          <div class="result-icon" id="result-icon" aria-hidden="true"></div>
+          <div class="result-copy">
+            <p class="eyebrow" id="result-eyebrow">RECALL CHECKED</p>
+            <h3 id="result-title">Keep practicing</h3>
+            <p id="result-message"></p>
+          </div>
+          <div class="accuracy-block"><strong id="accuracy-value">0%</strong><span id="accuracy-label">Blanks correct</span></div>
+        </div>
+        <div class="blank-review" id="blank-review" hidden></div>
+        <div class="diff-legend" id="diff-legend" aria-label="Diff legend" hidden>
+          <span><i class="legend-dot modified"></i>Modified</span>
+          <span><i class="legend-dot missing"></i>Missing</span>
+          <span><i class="legend-dot added"></i>Extra</span>
+          <span class="diff-mode-label" id="diff-mode-label">Friendly comparison</span>
+        </div>
+        <div class="diff-table" id="diff-table" role="table" aria-label="Line-by-line comparison" hidden>
+          <div class="diff-header" role="row">
+            <span role="columnheader">Line</span><span role="columnheader">Expected</span><span role="columnheader">Your recall</span>
+          </div>
+          <div id="diff-rows"></div>
+        </div>
+      </section>
+
+      <section class="answer-card" id="answer-card" aria-labelledby="answer-title" hidden>
+        <div class="card-header answer-header">
+          <div><p class="eyebrow">REFERENCE</p><h3 id="answer-title">Original code</h3></div>
+          <button type="button" class="text-button" id="copy-button">Copy code</button>
+        </div>
+        <pre class="reference-code"><code id="reference-code"></code></pre>
+      </section>
+
+      <section class="practice-empty" id="practice-empty" aria-live="polite">
+        <span class="empty-check" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="m7 12 3 3 7-7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.5"/></svg></span>
+        <div><strong>Ready when you are.</strong><p>Fill in the blanks, then check your answers.</p></div>
+      </section>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>
