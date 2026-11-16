@@ -125,6 +125,41 @@ def redeem_code(code, invites):
     return None
 
 
+def seed_invites():
+    """Re-create codes from SEED_INVITES on every start.
+
+    Hosts with an ephemeral filesystem (Render free tier) lose invites.json on
+    restart/redeploy. Seeding keeps a known set of codes working permanently.
+    """
+    raw = os.environ.get("SEED_INVITES", "").strip()
+    if not raw:
+        return
+    try:
+        max_uses = int(os.environ.get("SEED_MAX_USES", "100"))
+    except (TypeError, ValueError):
+        max_uses = 100
+    invites = load_invites()
+    existing = {c.get("code") for c in invites.get("codes", [])}
+    now = datetime.utcnow()
+    changed = False
+    for code in [part.strip().upper() for part in raw.split(",") if part.strip()]:
+        if code in existing:
+            continue
+        invites.setdefault("codes", []).append({
+            "code": code,
+            "created": now.isoformat(),
+            "expires": None,
+            "maxUses": max_uses,
+            "usedCount": 0,
+            "revoked": False,
+            "note": "seed",
+        })
+        changed = True
+        print(f"[seed] Added invite code {code}", file=sys.stderr)
+    if changed:
+        save_invites(invites)
+
+
 def code_view(entry, now=None):
     now = now or datetime.utcnow()
     status = "active"
@@ -341,6 +376,7 @@ def main():
     except OSError:
         pass
     ADMIN_TOKEN = get_admin_token()
+    seed_invites()
     port = int(os.environ.get("PORT", "8000"))
     host = os.environ.get("HOST", "0.0.0.0")
     server = ThreadingHTTPServer((host, port), Handler)
