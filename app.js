@@ -167,7 +167,7 @@ function renderMode() {
     button.setAttribute('aria-pressed', String(active));
   });
   $('code-editor').classList.toggle('is-cloze', cloze);
-  $('editor-title').textContent = cloze ? 'Fill in the blanks' : 'Your recall';
+  $('editor-title').textContent = cloze ? 'Fill in the blanks' : 'Full recall';
   $('mode-description').textContent = cloze
     ? 'Fill in the removed key terms. Comments are not checked.'
     : 'Type the full snippet. Comments and indentation are not checked.';
@@ -393,6 +393,18 @@ const CLOZE_KEYWORDS = new Map([
 ]);
 
 const CONTROL_WORDS = new Set(['if', 'while', 'for', 'switch', 'return', 'sizeof', 'else']);
+const CODE_TOKEN_RE = /[A-Za-z_]\w*|->|\+\+|--|&&|\|\||==|!=|<=|>=/g;
+
+/* Returns every code token in a masked snippet, in source order. */
+function scanTokens(masked) {
+  const pattern = new RegExp(CODE_TOKEN_RE.source, 'g');
+  const tokens = [];
+  let match;
+  while ((match = pattern.exec(masked)) !== null) {
+    tokens.push({ token: match[0], index: match.index });
+  }
+  return tokens;
+}
 
 function buildBlanks(code) {
   const original = normalizeNewlines(code);
@@ -461,11 +473,55 @@ function buildBlanks(code) {
     .map((blank, index) => ({ ...blank, index }));
 }
 
+/* Build blanks from an admin-curated token list (first occurrence of each). */
+function buildCustomBlanks(code, tokens) {
+  const original = normalizeNewlines(code);
+  const masked = maskCode(original);
+  const lineStarts = [0];
+  for (let index = 0; index < masked.length; index += 1) {
+    if (masked[index] === '\n') lineStarts.push(index + 1);
+  }
+  const lineOf = (offset) => {
+    let low = 0;
+    let high = lineStarts.length - 1;
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if (lineStarts[middle] <= offset) low = middle;
+      else high = middle - 1;
+    }
+    return low;
+  };
+
+  const chosen = [];
+  const used = new Set();
+  tokens.forEach((token) => {
+    if (!token || used.has(token)) return;
+    let start = -1;
+    if (/^[A-Za-z_]\w*$/.test(token)) {
+      const pattern = new RegExp(`\\b${token}\\b`);
+      const match = pattern.exec(masked);
+      if (match) start = match.index;
+    } else {
+      start = masked.indexOf(token);
+    }
+    if (start < 0) return;
+    used.add(token);
+    chosen.push({ token, start, end: start + token.length, line: lineOf(start) });
+  });
+
+  return chosen
+    .sort((a, b) => a.start - b.start)
+    .map((blank, index) => ({ ...blank, index }));
+}
+
 function ensureBlanks() {
   const exercise = getCurrentExercise();
   if (!exercise) return;
   if (state.blanksFor === exercise.id) return;
-  state.blanks = buildBlanks(exercise.code);
+  const custom = Array.isArray(exercise.blanks) ? exercise.blanks : [];
+  let blanks = custom.length ? buildCustomBlanks(exercise.code, custom) : [];
+  if (!blanks.length) blanks = buildBlanks(exercise.code);
+  state.blanks = blanks;
   state.blanksFor = exercise.id;
   state.clozeValues = new Array(state.blanks.length).fill('');
 }
@@ -768,7 +824,7 @@ function renderResult() {
     return;
   }
 
-  $('diff-mode-label').textContent = 'Friendly comparison';
+  $('diff-mode-label').textContent = 'Full recall comparison';
   const fragment = document.createDocumentFragment();
   result.diff.forEach((line) => {
     const row = document.createElement('div');
@@ -830,16 +886,57 @@ function setMode(mode) {
   renderPractice();
 }
 
-function initializeFilters() {
+function renderChapterOptions() {
   const chapters = [...new Set(exercises.map((item) => item.chapter))];
+  const select = $('chapter-select');
   const fragment = document.createDocumentFragment();
+  const all = document.createElement('option');
+  all.value = 'all';
+  all.textContent = 'All chapters';
+  fragment.append(all);
   chapters.forEach((chapter) => {
     const option = document.createElement('option');
     option.value = chapter;
     option.textContent = chapter;
     fragment.append(option);
   });
-  $('chapter-select').append(fragment);
+  select.replaceChildren(fragment);
+  if (state.chapter !== 'all' && chapters.includes(state.chapter)) select.value = state.chapter;
+  else {
+    state.chapter = 'all';
+    select.value = 'all';
+  }
+}
+
+/* Replace the static bundle with the server-side snippet library (admin editable). */
+async function refreshExercises(resetCurrent = false) {
+  try {
+    const res = await fetch('/api/snippets', { cache: 'no-store' });
+    if (!res.ok) return false;
+    const data = await res.json();
+    const list = Array.isArray(data.snippets) ? data.snippets : [];
+    if (!list.length) return false;
+    exercises.splice(0, exercises.length, ...list);
+    if (!exercises.some((item) => item.id === state.selectedId)) {
+      state.selectedId = exercises[0].id;
+      resetCurrent = true;
+    }
+    if (resetCurrent) {
+      state.answer = '';
+      state.blanks = [];
+      state.blanksFor = null;
+      state.clozeValues = [];
+      state.result = null;
+      state.revealed = false;
+    }
+    renderChapterOptions();
+    renderLibrary();
+    renderProgress();
+    renderPractice();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function bindEvents() {
@@ -1075,12 +1172,29 @@ function showInviteError(message) {
 }
 
 // ---- Admin ----
+let activeAdminTab = 'invites';
+
+function switchAdminTab(tab) {
+  activeAdminTab = tab;
+  document.querySelectorAll('[data-admin-tab]').forEach((button) => {
+    const active = button.dataset.adminTab === tab;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  document.querySelectorAll('.admin-panel').forEach((panel) => {
+    panel.hidden = panel.id !== `admin-panel-${tab}`;
+  });
+  if (tab === 'invites') loadAdminCodes();
+  else if (tab === 'snippets') loadAdminSnippets();
+  else if (tab === 'feishu') loadFeishuStatus();
+}
+
 function openAdmin() {
   $('admin-modal').hidden = false;
   if (adminToken) {
     $('admin-auth').hidden = true;
     $('admin-body').hidden = false;
-    loadAdminCodes();
+    switchAdminTab(activeAdminTab);
   } else {
     $('admin-auth').hidden = false;
     $('admin-body').hidden = true;
@@ -1115,7 +1229,7 @@ async function adminLogin() {
   $('admin-error').hidden = true;
   $('admin-auth').hidden = true;
   $('admin-body').hidden = false;
-  loadAdminCodes();
+  switchAdminTab(activeAdminTab);
 }
 
 async function loadAdminCodes() {
@@ -1173,6 +1287,255 @@ async function revokeCode(code) {
   loadAdminCodes();
 }
 
+// ---- Admin: snippet library ----
+
+let adminSnippets = [];
+let editingSnippetId = null;
+let draftBlanks = [];
+
+async function loadAdminSnippets() {
+  const { status, data } = await adminApi('/api/snippets');
+  if (status !== 200) return;
+  adminSnippets = Array.isArray(data.snippets) ? data.snippets : [];
+  renderAdminSnippets();
+  renderSnippetChapterOptions();
+}
+
+function renderSnippetChapterOptions() {
+  const datalist = $('snippet-chapter-options');
+  const chapters = [...new Set(exercises.map((item) => item.chapter))];
+  datalist.replaceChildren(...chapters.map((chapter) => {
+    const option = document.createElement('option');
+    option.value = chapter;
+    return option;
+  }));
+}
+
+function renderAdminSnippets() {
+  const list = $('snippet-admin-list');
+  if (!adminSnippets.length) {
+    list.innerHTML = '<div class="admin-empty">No snippets yet. Create one to add it to the practice library.</div>';
+    return;
+  }
+  list.innerHTML = adminSnippets.map((snippet) => {
+    const customCount = Array.isArray(snippet.blanks) ? snippet.blanks.length : 0;
+    const blankLabel = customCount ? `${customCount} custom blanks` : 'auto blanks';
+    return `
+      <div class="snippet-row">
+        <div class="snippet-row-main">
+          <strong>${escapeHtml(snippet.title)}</strong>
+          <small>${escapeHtml(snippet.chapter)} · ${escapeHtml(snippet.language)} · ${blankLabel}</small>
+        </div>
+        <button type="button" class="admin-revoke" data-edit-snippet="${escapeHtml(snippet.id)}">Edit</button>
+      </div>
+    `;
+  }).join('');
+  list.querySelectorAll('[data-edit-snippet]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const snippet = adminSnippets.find((item) => item.id === button.dataset.editSnippet);
+      if (snippet) openSnippetEditor(snippet);
+    });
+  });
+}
+
+function openSnippetEditor(snippet) {
+  editingSnippetId = snippet ? snippet.id : null;
+  $('snippet-editor').hidden = false;
+  $('snippet-editor-title').textContent = snippet ? 'Edit snippet' : 'New snippet';
+  $('snippet-title').value = snippet ? snippet.title : '';
+  $('snippet-chapter').value = snippet ? snippet.chapter : (getCurrentExercise()?.chapter || '');
+  $('snippet-language').value = snippet ? snippet.language : 'C';
+  $('snippet-description').value = snippet ? snippet.description : '';
+  $('snippet-code').value = snippet ? normalizeNewlines(snippet.code) : '';
+  draftBlanks = Array.isArray(snippet?.blanks) ? [...snippet.blanks] : [];
+  $('snippet-delete').hidden = !snippet;
+  $('snippet-status').textContent = '';
+  renderBlankEditor();
+  $('snippet-editor').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function renderBlankEditor() {
+  const code = normalizeNewlines($('snippet-code').value);
+  const masked = maskCode(code);
+  const present = new Set(scanTokens(masked).map((item) => item.token));
+
+  const chips = $('snippet-blank-chips');
+  chips.replaceChildren();
+  if (!draftBlanks.length) {
+    const empty = document.createElement('span');
+    empty.className = 'blank-chip-empty';
+    empty.textContent = 'Automatic blanks will be used.';
+    chips.append(empty);
+  } else {
+    draftBlanks.forEach((token) => {
+      const chip = document.createElement('span');
+      chip.className = `blank-chip${present.has(token) ? '' : ' is-missing'}`;
+      const label = document.createElement('code');
+      label.textContent = token;
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.textContent = '×';
+      remove.setAttribute('aria-label', `Remove blank ${token}`);
+      remove.addEventListener('click', () => {
+        draftBlanks = draftBlanks.filter((item) => item !== token);
+        renderBlankEditor();
+      });
+      chip.append(label, remove);
+      chips.append(chip);
+    });
+  }
+
+  const preview = $('snippet-token-preview');
+  preview.replaceChildren();
+  if (!code) {
+    preview.textContent = 'Paste code above to pick blanks.';
+    return;
+  }
+  const fragment = document.createDocumentFragment();
+  let cursor = 0;
+  scanTokens(masked).forEach(({ token, index }) => {
+    if (index > cursor) fragment.append(document.createTextNode(code.slice(cursor, index)));
+    const selected = draftBlanks.includes(token);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `token${selected ? ' is-blank' : ''}`;
+    button.textContent = token;
+    button.title = selected ? 'Remove blank' : 'Add blank';
+    button.addEventListener('click', () => {
+      draftBlanks = selected
+        ? draftBlanks.filter((item) => item !== token)
+        : [...draftBlanks, token];
+      renderBlankEditor();
+    });
+    fragment.append(button);
+    cursor = index + token.length;
+  });
+  if (cursor < code.length) fragment.append(document.createTextNode(code.slice(cursor)));
+  preview.append(fragment);
+}
+
+function setSnippetStatus(message, isError) {
+  const el = $('snippet-status');
+  el.textContent = message;
+  el.classList.toggle('is-error', Boolean(isError));
+}
+
+async function saveSnippet(event) {
+  event.preventDefault();
+  const title = $('snippet-title').value.trim();
+  const code = normalizeNewlines($('snippet-code').value);
+  if (!title) {
+    setSnippetStatus('Title is required.', true);
+    return;
+  }
+  if (!code.trim()) {
+    setSnippetStatus('Code is required.', true);
+    return;
+  }
+  const present = new Set(scanTokens(maskCode(code)).map((item) => item.token));
+  const blanks = draftBlanks.filter((token) => present.has(token));
+  const payload = {
+    title,
+    chapter: $('snippet-chapter').value.trim() || 'Uncategorized',
+    language: $('snippet-language').value.trim() || 'C',
+    description: $('snippet-description').value.trim(),
+    code,
+    blanks,
+  };
+
+  const saveButton = $('snippet-save');
+  saveButton.disabled = true;
+  try {
+    const { status, data } = editingSnippetId
+      ? await adminApi(`/api/admin/snippets/${encodeURIComponent(editingSnippetId)}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      })
+      : await adminApi('/api/admin/snippets', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+    if (status >= 400) {
+      setSnippetStatus(data.error || 'Could not save the snippet.', true);
+      return;
+    }
+    $('snippet-editor').hidden = true;
+    await loadAdminSnippets();
+    await refreshExercises(true);
+    showToast('Snippet saved. Practice library updated.');
+  } finally {
+    saveButton.disabled = false;
+  }
+}
+
+async function deleteSnippet() {
+  if (!editingSnippetId) return;
+  if (!confirm('Delete this snippet? It will be removed from the practice library.')) return;
+  const { status, data } = await adminApi(`/api/admin/snippets/${encodeURIComponent(editingSnippetId)}`, {
+    method: 'DELETE',
+  });
+  if (status >= 400) {
+    setSnippetStatus(data.error || 'Could not delete the snippet.', true);
+    return;
+  }
+  $('snippet-editor').hidden = true;
+  await loadAdminSnippets();
+  await refreshExercises(true);
+  showToast('Snippet deleted.');
+}
+
+// ---- Admin: Feishu ----
+
+async function loadFeishuStatus() {
+  const box = $('feishu-status');
+  box.textContent = 'Checking configuration…';
+  const { status, data } = await adminApi('/api/admin/feishu/status');
+  if (status !== 200) {
+    box.textContent = 'Could not read the Feishu status.';
+    return;
+  }
+  const feishu = data.feishu || {};
+  const rows = [
+    ['Bitable sync', feishu.bitable ? 'configured' : 'not configured'],
+    ['Bot commands', feishu.bot ? 'configured' : 'not configured'],
+    ['Webhook notifications', feishu.webhook ? 'on' : 'off'],
+    ['Authorized bot admins', String(feishu.adminOpenIds ?? 0)],
+  ];
+  box.innerHTML = rows.map(([label, value]) => `<span><strong>${label}:</strong> ${value}</span>`).join('');
+}
+
+async function runFeishuSync(action) {
+  const result = $('feishu-result');
+  result.hidden = false;
+  result.classList.remove('is-error');
+  result.textContent = action === 'pull' ? 'Pulling codes from Feishu…' : 'Pushing codes to Feishu…';
+  const { status, data } = await adminApi('/api/admin/feishu/sync', {
+    method: 'POST',
+    body: JSON.stringify({ action }),
+  });
+  if (status !== 200 || !data.ok) {
+    result.classList.add('is-error');
+    result.textContent = data.error || 'Feishu sync failed.';
+    return;
+  }
+  const summary = data.result || {};
+  result.textContent = action === 'pull'
+    ? `Pulled ${summary.total ?? 0} records · added ${summary.added ?? 0} · updated ${summary.updated ?? 0}.`
+    : `Pushed codes · created ${summary.created ?? 0} · updated ${summary.updated ?? 0}.`;
+  await loadAdminCodes();
+}
+
+// ---- Invite gate shortcut ----
+
+function changeInviteCode() {
+  if (!confirm('Return to the invite code screen? Your progress on this device is kept.')) return;
+  localStorage.removeItem(INVITE_STORAGE_KEY);
+  closeAdmin();
+  $('invite-input').value = '';
+  $('invite-error').hidden = true;
+  showInviteGate();
+}
+
 function bindInviteEvents() {
   const input = $('invite-input');
   input.addEventListener('input', () => {
@@ -1193,17 +1556,42 @@ function bindInviteEvents() {
     if (e.key === 'Enter') adminLogin();
   });
   $('gen-button').addEventListener('click', generateCode);
+  $('invites-refresh').addEventListener('click', loadAdminCodes);
   const adminEntry = $('admin-entry');
   if (adminEntry) adminEntry.addEventListener('click', openAdmin);
+  $('change-invite-entry').addEventListener('click', changeInviteCode);
+
+  document.querySelectorAll('[data-admin-tab]').forEach((button) => {
+    button.addEventListener('click', () => switchAdminTab(button.dataset.adminTab));
+  });
+
+  $('snippet-new').addEventListener('click', () => openSnippetEditor(null));
+  $('snippet-close').addEventListener('click', () => { $('snippet-editor').hidden = true; });
+  $('snippet-cancel').addEventListener('click', () => { $('snippet-editor').hidden = true; });
+  $('snippet-editor').addEventListener('submit', saveSnippet);
+  $('snippet-delete').addEventListener('click', deleteSnippet);
+  $('snippet-code').addEventListener('input', renderBlankEditor);
+  $('snippet-auto-blanks').addEventListener('click', () => {
+    draftBlanks = buildBlanks($('snippet-code').value).map((blank) => blank.token);
+    renderBlankEditor();
+  });
+  $('snippet-clear-blanks').addEventListener('click', () => {
+    draftBlanks = [];
+    renderBlankEditor();
+  });
+
+  $('feishu-refresh').addEventListener('click', loadFeishuStatus);
+  $('feishu-pull').addEventListener('click', () => runFeishuSync('pull'));
+  $('feishu-push').addEventListener('click', () => runFeishuSync('push'));
 }
 
-function init() {
+async function init() {
   if (!exercises.length) {
     showToast('No exercises could be loaded.');
     return;
   }
   bindInviteEvents();
-  initializeFilters();
+  renderChapterOptions();
   bindEvents();
   renderLibrary();
   renderProgress();
@@ -1211,6 +1599,7 @@ function init() {
   if (!hasValidInvite()) {
     showInviteGate();
   }
+  await refreshExercises();
 }
 
 init();

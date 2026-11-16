@@ -13,3 +13,18 @@ services:
         generateValue: true
       - key: PYTHON_VERSION
         value: "3.12.6"
+      # Optional Feishu integration (leave blank to disable).
+      - key: FEISHU_APP_ID
+        sync: false
+      - key: FEISHU_APP_SECRET
+        sync: false
+      - key: FEISHU_BITABLE_APP_TOKEN
+        sync: false
+      - key: FEISHU_TABLE_ID
+        sync: false
+      - key: FEISHU_VERIFICATION_TOKEN
+        sync: false
+      - key: FEISHU_ADMIN_OPEN_IDS
+        sync: false
+      - key: FEISHU_WEBHOOK_URL
+        sync: false
