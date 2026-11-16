@@ -262,6 +262,20 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, {"ok": True})
             return
 
+        if path == "/api/admin/diag":
+            if not self._is_admin():
+                self._send_json(401, {"error": "Unauthorized"})
+                return
+            raw = os.environ.get("SEED_INVITES", "")
+            seeds = [p.strip() for p in raw.split(",") if p.strip()]
+            self._send_json(200, {
+                "build": "seed-1",
+                "seedInvitesSet": bool(seeds),
+                "seedCount": len(seeds),
+                "storedCodes": len(load_invites().get("codes", [])),
+            })
+            return
+
         # Static files
         if path in STATIC_FILES:
             self._send_file(STATIC_FILES[path])
